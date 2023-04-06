@@ -1,0 +1,9 @@
+axes.titlesize : 35
+axes.labelsize : 30
+lines.linewidth : 3
+lines.markersize : 10
+xtick.labelsize : 35
+ytick.labelsize : 35
+savefig.dpi: 300
+font.family : Arial
+legend.fontsize: 30

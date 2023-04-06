@@ -1,0 +1,335 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+#if (!require("BiocManager", quietly = TRUE))
+#  install.packages("BiocManager")
+
+#BiocManager::install("TxDb.Mmusculus.UCSC.mm9.knownGene")
+#BiocManager::install("TxDb.Mmusculus.UCSC.mm10.knownGene")
+#BiocManager::install("TxDb.Mmusculus.UCSC.mm38.knownGene")
+#BiocManager::install("org.Mm.eg.db")
+#BiocManager::install("annotatr")
+##browseVignettes("annotatr")
+#BiocManager::install("viridis")
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("ChIPseeker")
+#BiocManager::install("ReactomePA")
+
+library(dplyr)
+library(tidyr)
+library(annotatr)
+library(readr)
+library(ChIPseeker)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(clusterProfiler)
+library(ReactomePA)
+require(viridis)
+library(ggplot2)
+library(RColorBrewer)
+library(colorspace)
+
+```
+
+
+```{r}
+
+# Select annotations for intersection with regions
+# Note inclusion of custom annotation, and use of shortcuts
+setwd('/Users/tarkhov/Dropbox/Harvard/Science/R')
+
+#dm_file = system.file('extdata', 'GSE80672_entropic_regions.csv', package = 'annotatr')
+#dm_file = system.file('extdata', 'IDH2mut_v_NBM_multi_data_chr9.txt.gz', package = 'annotatr')
+#dm_file = "/Users/tarkhov/Dropbox/Harvard/Science/Stochastic aging/data/GSE80672/GSE80672_regions.csv"
+#dm_file = "/Users/tarkhov/Dropbox/Harvard/Science/Stochastic aging/data/GSE80672/GSE80672_regions_full.csv"
+#dm_file = "/Users/tarkhov/Dropbox/Harvard/Science/Stochastic aging/data/GSE80672/GSE80672_Petkovich_regions.csv"
+#dm_file = "/Users/tarkhov/Dropbox/Harvard/Science/scDNAm/data/GSE121436/GSE121436_b_up.csv"
+#dm_file = "/Users/tarkhov/Dropbox/Harvard/Science/Stochastic aging/data/GSE80672/GSE80672_regions_7types.csv"
+#dm_file = "/Users/tarkhov/Dropbox/Harvard/Science/Stochastic aging/data/GSE80672/scDNAm_aging_hypohyper_meth.csv"
+dm_file = "/Users/tarkhov/Dropbox/Harvard/Science/Stochastic aging/data/GSE80672/scDNAm_aging_coreg_stoch_meth.csv"
+
+
+extraCols = c()#r_age = 'numeric', p_age = 'numeric'
+              #, entropic_BA_x0 = 'numeric',
+              #antientropic_BA_b = 'numeric', antientropic_BA_x0 = 'numeric'
+          #)
+
+dm_regions = read_regions(con = dm_file, genome = 'mm10', extraCols = extraCols, 
+                          format = 'bed',
+                          rename_name = 'DM_status', rename_score = 'pval'
+                          )
+
+# Use less regions to speed things up
+#dm_regions = dm_regions[1:2000]
+print(dm_regions)
+```
+
+```{r}
+
+only_mm10 <- builtin_annotations() %>%
+       as.data.frame %>%
+       filter(grepl("mm10", .))
+annots <- only_mm10$"."
+
+# Build the annotations (a single GRanges object)
+annotations = build_annotations(genome = 'mm10', annotations = annots)
+
+# Intersect the regions we read in with the annotations
+dm_annotated = annotate_regions(
+  regions = dm_regions,
+  annotations = annotations,
+  ignore.strand = TRUE,
+  quiet = FALSE)
+# A GRanges object is returned
+print(dm_annotated)
+
+```
+
+
+```{r}
+#covplot(dm_annotated, weightCol="r_age")
+df_dump <- data.frame(annotations)
+write.csv(df_dump, "mm10_annotation_dump.csv", row.names = rownames(df_dump))
+```
+
+
+```{r}
+
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+gene <- seq2gene(dm_annotated, tssRegion = c(-1000, 1000), flankDistance = 3000, TxDb=txdb)
+pathway2 <- enrichPathway(gene)
+head(pathway2, 2)
+
+```
+
+```{r}
+dotplot(pathway2)
+```
+
+```{r}
+#covplot(dm_regions, weightCol="r_age")
+
+# Randomize the input regions
+dm_random_regions = randomize_regions(
+  regions = dm_regions,
+  allow.overlaps = TRUE,
+  per.chromosome = TRUE)
+
+# Annotate the random regions using the same annotations as above
+# These will be used in later functions
+dm_random_annotated = annotate_regions(
+  regions = dm_random_regions,
+  annotations = annotations,
+  ignore.strand = TRUE,
+  quiet = TRUE)
+
+# Find the number of regions per annotation type
+dm_annsum = summarize_annotations(
+  annotated_regions = dm_annotated,
+  quiet = TRUE)
+print(dm_annsum)
+
+```
+
+```{r}
+# Find the number of regions per annotation type
+# and the number of random regions per annotation type
+dm_annsum_rnd = summarize_annotations(
+  annotated_regions = dm_annotated,
+  annotated_random = dm_random_annotated,
+  quiet = TRUE)
+print(dm_annsum_rnd)
+
+```
+
+```{r}
+# Take the mean of the diff_meth column across all regions
+# occurring in an annotation.
+dm_numsum = summarize_numerical(
+  annotated_regions = dm_annotated,
+  by = c('annot.type', 'annot.id'),
+  over = c('r_age'),
+  quiet = TRUE)
+print(dm_numsum)
+
+```
+
+```{r}
+# Count the occurrences of classifications in the DM_status
+# column across the annotation types.
+dm_catsum = summarize_categorical(
+  annotated_regions = dm_annotated,
+  by = c('annot.type', 'DM_status'),
+  quiet = TRUE)
+print(dm_catsum)
+
+```
+
+```{r}
+#dm_annotated <- data.frame(dm_annotated)
+# The orders for the x-axis labels.
+x_order = sort(annots)
+#print(x_order)
+#x_order = x_order[c(2,3,6,7,9,10,11, 13,15,17,18)]
+#x_order = x_order[c(1,2,3)]
+# The orders for the fill labels.
+fill_order = c(
+  'hyper',
+  'none',
+  'hypo')
+
+bioages_nonord = c('entropic_down_BA', 'entropic_up_BA', 'antientropic_down_BA', 'antientropic_up_BA',
+            'constant_BA',  'antient_insignificant_up_BA', 'antient_insignificant_down_BA', 
+            'ent_insignificant_up_BA', 'ent_insignificant_down_BA')
+
+bioages = c('constant_BA', 'ent_insignificant_up_BA', 'antient_insignificant_up_BA', 
+            'entropic_up_BA', 'antientropic_up_BA',
+            'entropic_down_BA', 'antientropic_down_BA', 
+            'ent_insignificant_down_BA', 'antient_insignificant_down_BA', 'petkovich_block')
+
+bioages = c('constant_BA', 'ent_insignificant_up_BA', 'antient_insignificant_up_BA', 
+            'entropic_up_BA', 'antientropic_up_BA',
+            'entropic_down_BA', 'antientropic_down_BA', 
+            'ent_insignificant_down_BA', 'antient_insignificant_down_BA', 'petkovich_block')
+
+#bioages = c('Background', 'Hypermethylated', 'Hypomethylated')
+bioages = c('Background', 'Co-regulated', 'Stochastic')
+#bioages = c('petkovich_clock')
+
+#bioages = c('from Young ISO Det. to Young HET Det.')
+
+#bioages = c('from Old ISO Det. to Old HET Det.')
+
+dm_vs_kg_cat = plot_categorical(
+  annotated_regions = dm_annotated, x='annot.type', fill='DM_status',
+  x_order = x_order, 
+  fill_order = bioages,
+  position='fill',
+  #position='dodge',
+  #position='stack',
+  legend_title = 'DM Status',
+  x_label = 'knownGene Annotations',
+  y_label = 'Proportion')
+print(dm_vs_kg_cat)
+
+```
+
+
+```{r}
+
+dm_vs_kg_cat = plot_categorical(
+annotated_regions = dm_annotated, fill='annot.type',
+    x='DM_status',
+  fill_order = x_order, 
+  x_order = bioages,
+  position='fill',
+  #position='dodge',
+  #position='stack',
+  legend_title = 'Genomic Annotation',
+  x_label = 'Epigenetic signatures',
+  y_label = 'Proportion')
+
+#xcolors = c('black', '#fddbc7', '#b2182b', '#ef8a62', '#d1e5f0', '#2166ac', '#67a9cf', '#c7c7c7')
+#ycolors = c('#67001f','#b2182b','#d6604d','#f4a582','#fddbc7','#f7f7f7','#d1e5f0','#92c5de','#4393c3','#2166ac','#053061')
+dm_vs_kg_cat
+
+```
+
+```{r}
+
+dm_vs_kg_cat = plot_categorical(
+  annotated_regions = dm_annotated, fill='annot.type',
+  x='DM_status',
+  fill_order = x_order, 
+  x_order = bioages,
+  #position='fill',
+  #position='dodge',
+  position='stack',
+  legend_title = 'Genomic Annotation',
+  x_label = 'Epigenetic signatures',
+  y_label = 'Proportion')
+print(dm_vs_kg_cat)
+
+```
+
+```{r}
+
+dm_vs_kg_cat = plot_categorical(
+  annotated_regions = dm_annotated, fill='annot.type',
+  x='DM_status',
+  fill_order = x_order, 
+  x_order = bioages,
+  #position='fill',
+  position='dodge',
+  #position='stack',
+  legend_title = 'DM Status',
+  x_label = 'knownGene Annotations',
+  y_label = 'Proportion')
+print(dm_vs_kg_cat)
+
+```
+
+
+```{r}
+dm_vs_kg_annotations = plot_annotation(
+  annotated_regions = dm_annotated,
+  #annotation_order = annots_order,
+  plot_title = '# of Sites Tested for DM annotated on chr9',
+  x_label = 'knownGene Annotations',
+  y_label = 'Count')
+print(dm_vs_kg_annotations)
+
+```
+
+
+```{r}
+
+dm_vs_kg_annotations_wrandom = plot_annotation(
+  annotated_regions = dm_annotated,
+  annotated_random = dm_random_annotated,
+  #annotation_order = annots_order,
+  plot_title = 'Dist. of Sites Tested for DM (with rndm.)',
+  x_label = 'Annotations',
+  y_label = 'Count')
+print(dm_vs_kg_annotations_wrandom)
+
+```
+
+```{r}
+
+dm_vs_coannotations = plot_coannotations(
+  annotated_regions = dm_annotated,
+  #annotation_order = annots_order,
+  axes_label = 'Annotations',
+  plot_title = 'Regions in Pairs of Annotations')
+print(dm_vs_coannotations)
+
+```
+
+```{r}
+dm_vs_regions_annot = plot_numerical(
+  annotated_regions = dm_annotated,
+  x = 'r_age',
+  facet = 'annot.type',
+  facet_order = annots,#c('hg19_genes_1to5kb','hg19_genes_promoters',
+  #                #'hg19_genes_5UTRs','hg19_genes_3UTRs', 'hg19_custom_ezh2',
+  #                #'hg19_genes_intergenic', 'hg19_cpg_islands'),
+  bin_width = 0.01,
+  plot_title = 'Group 0 Region Methylation In Genes',
+  x_label = 'Group 0')
+print(dm_vs_regions_annot)
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
